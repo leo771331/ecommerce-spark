@@ -1,0 +1,38 @@
+# Build outputs
+target/
+project/target/
+project/project/
+
+# IDE and language servers
+.idea/
+.vscode/
+.metals/
+.bloop/
+.bsp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Spark / Hive local runtime files
+metastore_db/
+spark-warehouse/
+derby.log
+
+# Data files - do not commit Kaggle data or generated parquet
+data/raw/*
+data/sample/*
+data/processed/*
+
+# Keep directory placeholders
+!data/raw/.gitkeep
+!data/sample/.gitkeep
+!data/processed/.gitkeep
+
+# Packaged artifacts
+*.jar
+*.zip
+*.tar.gz
