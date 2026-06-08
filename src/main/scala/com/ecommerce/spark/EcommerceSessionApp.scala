@@ -1,6 +1,7 @@
 package com.ecommerce.spark
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.functions.{col, from_utc_timestamp, regexp_replace, to_timestamp}
 import org.apache.spark.sql.types._
 
 object EcommerceSessionApp {
@@ -36,6 +37,7 @@ object EcommerceSessionApp {
 
     val spark = SparkSession.builder()
       .appName("EcommerceSessionApp")
+      .config("spark.sql.session.timeZone", "UTC")
       .enableHiveSupport()
       .getOrCreate()
 
@@ -51,6 +53,13 @@ object EcommerceSessionApp {
 
       println("Raw event sample:")
       rawEvents.show(numRows = 5, truncate = false)
+
+      val eventsWithTime = addEventTimeColumns(rawEvents)
+
+      println("Event time conversion sample:")
+      eventsWithTime
+        .select("event_time", "event_time_utc", "event_time_kst", "user_id")
+        .show(numRows = 5, truncate = false)
     } finally {
       spark.stop()
     }
@@ -110,5 +119,19 @@ object EcommerceSessionApp {
       .option("mode", "PERMISSIVE")
       .schema(RawEventSchema)
       .csv(inputPaths: _*)
+  }
+  private def addEventTimeColumns(rawEvents: DataFrame): DataFrame = {
+  rawEvents
+    .withColumn(
+      "event_time_utc",
+      to_timestamp(
+        regexp_replace(col("event_time"), " UTC$", ""),
+        "yyyy-MM-dd HH:mm:ss"
+      )
+    )
+    .withColumn(
+      "event_time_kst",
+      from_utc_timestamp(col("event_time_utc"), "Asia/Seoul")
+    )
   }
 }
