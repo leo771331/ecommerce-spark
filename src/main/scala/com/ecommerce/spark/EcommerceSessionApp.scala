@@ -1,7 +1,7 @@
 package com.ecommerce.spark
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.functions.{col, from_utc_timestamp, regexp_replace, to_timestamp}
+import org.apache.spark.sql.functions.{col, date_format, from_utc_timestamp, regexp_replace, to_timestamp}
 import org.apache.spark.sql.types._
 
 object EcommerceSessionApp {
@@ -60,6 +60,13 @@ object EcommerceSessionApp {
       eventsWithTime
         .select("event_time", "event_time_utc", "event_time_kst", "user_id")
         .show(numRows = 5, truncate = false)
+
+      val eventsWithPartition = addKstDatePartitionColumn(eventsWithTime)
+
+      println("KST daily partition sample:")
+      eventsWithPartition
+        .select("event_time", "event_time_kst", "event_date_kst", "user_id")
+        .show(numRows = 10, truncate = false)
     } finally {
       spark.stop()
     }
@@ -132,6 +139,12 @@ object EcommerceSessionApp {
     .withColumn(
       "event_time_kst",
       from_utc_timestamp(col("event_time_utc"), "Asia/Seoul")
+    )
+  }
+  private def addKstDatePartitionColumn(events: DataFrame): DataFrame = {
+  events.withColumn(
+      "event_date_kst",
+      date_format(col("event_time_kst"), "yyyy-MM-dd")
     )
   }
 }
