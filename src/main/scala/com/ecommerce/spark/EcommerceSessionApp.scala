@@ -1,7 +1,8 @@
 package com.ecommerce.spark
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.functions.{col, date_format, from_utc_timestamp, regexp_replace, to_timestamp}
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.functions.{col, concat_ws, date_format, from_utc_timestamp, lag, lit, lpad, min, regexp_replace, sum, to_timestamp, unix_timestamp, when}
 import org.apache.spark.sql.types._
 
 object EcommerceSessionApp {
@@ -17,6 +18,8 @@ object EcommerceSessionApp {
       |Environment variables:
       |  INPUT_PATHS=<csv-path-1,csv-path-2,...>
       |""".stripMargin.trim
+
+  private val SessionGapSeconds: Long = 5 * 60
 
   private val RawEventSchema: StructType = StructType(
     Seq(
@@ -67,6 +70,22 @@ object EcommerceSessionApp {
       eventsWithPartition
         .select("event_time", "event_time_kst", "event_date_kst", "user_id")
         .show(numRows = 10, truncate = false)
+
+      val sessionizedEvents = addSessionColumns(eventsWithPartition)
+
+      println("Sessionization sample:")
+      sessionizedEvents
+        .select(
+          "user_id",
+          "event_time_kst",
+          "prev_event_time_kst",
+          "gap_seconds",
+          "is_new_session",
+          "session_seq",
+          "generated_session_id"
+        )
+        .orderBy("user_id", "event_time_kst")
+        .show(numRows = 50, truncate = false)
     } finally {
       spark.stop()
     }
@@ -142,9 +161,59 @@ object EcommerceSessionApp {
     )
   }
   private def addKstDatePartitionColumn(events: DataFrame): DataFrame = {
-  events.withColumn(
+    events.withColumn(
       "event_date_kst",
       date_format(col("event_time_kst"), "yyyy-MM-dd")
     )
+  }
+  private def addSessionColumns(events: DataFrame): DataFrame = {
+    val userEventWindow = Window
+      .partitionBy(col("user_id"))
+      .orderBy(
+        col("event_time_kst").asc,
+        col("event_time").asc,
+        col("event_type").asc,
+        col("product_id").asc,
+        col("user_session").asc
+      )
+
+    val cumulativeSessionWindow = userEventWindow
+      .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+
+    val sessionWindow = Window
+      .partitionBy(col("user_id"), col("session_seq"))
+
+    events
+      .withColumn(
+        "prev_event_time_kst",
+        lag(col("event_time_kst"), 1).over(userEventWindow)
+      )
+      .withColumn(
+        "gap_seconds",
+        unix_timestamp(col("event_time_kst")) - unix_timestamp(col("prev_event_time_kst"))
+      )
+      .withColumn(
+        "is_new_session",
+        when(col("prev_event_time_kst").isNull, lit(1))
+          .when(col("gap_seconds") >= lit(SessionGapSeconds), lit(1))
+          .otherwise(lit(0))
+      )
+      .withColumn(
+        "session_seq",
+        sum(col("is_new_session")).over(cumulativeSessionWindow)
+      )
+      .withColumn(
+        "session_start_time_kst",
+        min(col("event_time_kst")).over(sessionWindow)
+      )
+      .withColumn(
+        "generated_session_id",
+        concat_ws(
+          "_",
+          col("user_id").cast("string"),
+          date_format(col("session_start_time_kst"), "yyyyMMddHHmmss"),
+          lpad(col("session_seq").cast("string"), 6, "0")
+        )
+      )
   }
 }
