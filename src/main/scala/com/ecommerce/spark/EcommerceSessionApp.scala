@@ -7,16 +7,18 @@ import org.apache.spark.sql.types._
 
 object EcommerceSessionApp {
   final case class AppConfig(
-      inputPaths: Seq[String] = Seq.empty
+      inputPaths: Seq[String] = Seq.empty,
+      outputPath: String = ""
   )
 
   private val Usage: String =
     """
       |Usage:
-      |  EcommerceSessionApp --input <csv-path-1,csv-path-2,...>
+      |  EcommerceSessionApp --input <csv-path-1,csv-path-2,...> --output <parquet-output-path>
       |
       |Environment variables:
       |  INPUT_PATHS=<csv-path-1,csv-path-2,...>
+      |  OUTPUT_PATH=<parquet-output-path>
       |""".stripMargin.trim
 
   private val SessionGapSeconds: Long = 5 * 60
@@ -48,6 +50,7 @@ object EcommerceSessionApp {
       println("EcommerceSessionApp started")
       println(s"Spark version: ${spark.version}")
       println(s"Input paths: ${config.inputPaths.mkString(",")}")
+      println(s"Output path: ${config.outputPath}")
 
       val rawEvents = readRawEvents(spark, config.inputPaths)
 
@@ -86,6 +89,9 @@ object EcommerceSessionApp {
         )
         .orderBy("user_id", "event_time_kst")
         .show(numRows = 50, truncate = false)
+      writeSessionizedEvents(sessionizedEvents, config.outputPath)
+
+      println(s"Sessionized events written to: ${config.outputPath}")
     } finally {
       spark.stop()
     }
@@ -101,6 +107,9 @@ object EcommerceSessionApp {
         case "--input" :: value :: tail =>
           loop(tail, config.copy(inputPaths = splitCsvPaths(value)))
 
+        case "--output" :: value :: tail =>
+          loop(tail, config.copy(outputPath = value.trim))
+
         case unknown :: _ =>
           throw new IllegalArgumentException(
             s"Unknown or incomplete argument: $unknown\n$Usage"
@@ -115,9 +124,19 @@ object EcommerceSessionApp {
       .map(splitCsvPaths)
       .getOrElse(Seq.empty)
 
+    val envOutputPath = sys.env
+      .get("OUTPUT_PATH")
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .getOrElse("")
+
     val finalInputPaths =
       if (parsedConfig.inputPaths.nonEmpty) parsedConfig.inputPaths
       else envInputPaths
+
+    val finalOutputPath =
+      if (parsedConfig.outputPath.nonEmpty) parsedConfig.outputPath
+      else envOutputPath
 
     if (finalInputPaths.isEmpty) {
       throw new IllegalArgumentException(
@@ -125,7 +144,16 @@ object EcommerceSessionApp {
       )
     }
 
-    parsedConfig.copy(inputPaths = finalInputPaths)
+    if (finalOutputPath.isEmpty) {
+      throw new IllegalArgumentException(
+        s"Output path is required.\n$Usage"
+      )
+    }
+
+    parsedConfig.copy(
+      inputPaths = finalInputPaths,
+      outputPath = finalOutputPath
+    )
   }
 
   private def splitCsvPaths(value: String): Seq[String] = {
@@ -146,26 +174,29 @@ object EcommerceSessionApp {
       .schema(RawEventSchema)
       .csv(inputPaths: _*)
   }
+
   private def addEventTimeColumns(rawEvents: DataFrame): DataFrame = {
-  rawEvents
-    .withColumn(
-      "event_time_utc",
-      to_timestamp(
-        regexp_replace(col("event_time"), " UTC$", ""),
-        "yyyy-MM-dd HH:mm:ss"
+    rawEvents
+      .withColumn(
+        "event_time_utc",
+        to_timestamp(
+          regexp_replace(col("event_time"), " UTC$", ""),
+          "yyyy-MM-dd HH:mm:ss"
+        )
       )
-    )
-    .withColumn(
-      "event_time_kst",
-      from_utc_timestamp(col("event_time_utc"), "Asia/Seoul")
-    )
+      .withColumn(
+        "event_time_kst",
+        from_utc_timestamp(col("event_time_utc"), "Asia/Seoul")
+      )
   }
+
   private def addKstDatePartitionColumn(events: DataFrame): DataFrame = {
     events.withColumn(
       "event_date_kst",
       date_format(col("event_time_kst"), "yyyy-MM-dd")
     )
   }
+
   private def addSessionColumns(events: DataFrame): DataFrame = {
     val userEventWindow = Window
       .partitionBy(col("user_id"))
@@ -215,5 +246,16 @@ object EcommerceSessionApp {
           lpad(col("session_seq").cast("string"), 6, "0")
         )
       )
+  }
+
+  private def writeSessionizedEvents(
+      sessionizedEvents: DataFrame,
+      outputPath: String
+  ): Unit = {
+    sessionizedEvents.write
+      .mode("overwrite")
+      .option("compression", "snappy")
+      .partitionBy("event_date_kst")
+      .parquet(outputPath)
   }
 }
