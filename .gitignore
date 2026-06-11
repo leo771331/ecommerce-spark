@@ -22,7 +22,7 @@ metastore_db/
 spark-warehouse/
 derby.log
 
-# Data files - do not commit Kaggle data or generated parquet
+# Data files
 data/raw/*
 data/sample/*
 data/processed/*
