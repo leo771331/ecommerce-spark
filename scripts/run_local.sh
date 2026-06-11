@@ -1,4 +1,4 @@
- #!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,6 +11,13 @@ JAR_PATH="$PROJECT_ROOT/target/scala-2.12/ecommerce-spark_2.12-0.1.0-SNAPSHOT.ja
 INPUT_PATHS="${INPUT_PATHS:-data/sample/raw_events_sample.csv}"
 OUTPUT_PATH="${OUTPUT_PATH:-data/processed/user_activity_sessions_sample}"
 RUN_ID="${RUN_ID:-sample_local_$(date +%Y%m%d%H%M%S)}"
+SPARK_SUBMIT_OPTIONS="${SPARK_SUBMIT_OPTIONS:-}"
+
+EXTRA_SPARK_SUBMIT_ARGS=()
+if [[ -n "$SPARK_SUBMIT_OPTIONS" ]]; then
+  # shellcheck disable=SC2206
+  EXTRA_SPARK_SUBMIT_ARGS=($SPARK_SUBMIT_OPTIONS)
+fi
 
 if ! command -v spark-submit >/dev/null 2>&1; then
   echo "[run-local] spark-submit command not found."
@@ -29,8 +36,10 @@ echo "[run-local] jar: $JAR_PATH"
 echo "[run-local] input: $INPUT_PATHS"
 echo "[run-local] output: $OUTPUT_PATH"
 echo "[run-local] run id: $RUN_ID"
+echo "[run-local] spark options: ${SPARK_SUBMIT_OPTIONS:-<none>}"
 
 spark-submit \
+  "${EXTRA_SPARK_SUBMIT_ARGS[@]}" \
   --class "$APP_CLASS" \
   --master local[*] \
   "$JAR_PATH" \
