@@ -94,16 +94,7 @@ object EcommerceSessionApp {
           .show(numRows = 10, truncate = false)
       }
 
-      val validEvents = filterValidEvents(eventsWithPartition)
-
-      if (config.debug) {
-        println("Valid event sample:")
-        validEvents
-          .select("event_time", "event_time_kst", "event_date_kst", "user_id")
-          .show(numRows = 10, truncate = false)
-      }
-
-      val sessionizedEvents = addSessionColumns(validEvents)
+      val sessionizedEvents = addSessionColumns(eventsWithPartition)
 
       if (config.debug) {
         println("Sessionization sample:")
@@ -263,14 +254,6 @@ object EcommerceSessionApp {
     )
   }
 
-  private def filterValidEvents(events: DataFrame): DataFrame = {
-    events
-      .where(col("event_time_utc").isNotNull)
-      .where(col("event_time_kst").isNotNull)
-      .where(col("event_date_kst").isNotNull)
-      .where(col("user_id").isNotNull)
-  }
-
   private def addSessionColumns(events: DataFrame): DataFrame = {
     val userEventWindow = Window
       .partitionBy(col("user_id"))
@@ -337,7 +320,6 @@ object EcommerceSessionApp {
 
     val partitionValues = sessionizedEvents
       .select("event_date_kst")
-      .where(col("event_date_kst").isNotNull)
       .distinct()
       .collect()
       .map(_.getString(0))

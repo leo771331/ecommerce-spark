@@ -26,7 +26,6 @@ Spark가 Scala 기반이고, Window 함수나 `lag` 같은 sessionization 로직
 2019-Oct.csv, 2019-Nov.csv
   → 명시적 schema로 CSV read
   → event_time UTC → KST 변환, event_date_kst 생성
-  → 필수 컬럼(event_time_kst, user_id) null row 제거
   → user_id별 5분 기준 sessionization → generated_session_id 생성
   → Parquet + Snappy, event_date_kst partition 저장
   → staging → target commit (실패 시 backup rollback)
@@ -88,8 +87,8 @@ target path에 바로 overwrite하지 않고, `_staging/run_id=<run_id>`에 먼�
 **Hive External Table**
 Spark가 Parquet 파일을 쓰고 Hive는 그 경로를 참조만 한다. 데이터 삭제와 테이블 metadata 삭제 책임이 분리되고, 나중에 LOCATION만 바꾸면 HDFS/S3로 이전할 수 있다.
 
-**null 처리 / deduplication**
-`event_time_kst`, `user_id`가 null이면 세션화 기준을 만들 수 없으므로 제외했다. `brand`, `price` 등 부가 컬럼은 null이어도 보존. 과제에서 중복 제거 기준을 정의하지 않아 임의 deduplication은 하지 않았다.
+**deduplication**
+원본 CSV 확인 결과 `event_time`, `user_id` 컬럼에는 null이 없었다. 과제에서 중복 제거 기준을 정의하지 않았기 때문에 임의 deduplication은 수행하지 않았다.
 
 ---
 
@@ -106,35 +105,37 @@ date_sub(
 
 쿼리 전문: [`sql/wau_queries.sql`](sql/wau_queries.sql)
 
+`user_id` 기준 WAU는 사용자가 해당 주차에 하나 이상의 이벤트를 남겼는지를 기준으로 계산했다. 따라서 동일 사용자가 여러 주차에 활동한 경우 각 주차의 active user로 카운트될 수 있다.
+
+`generated_session_id` 기준 WAU는 하나의 세션이 일자 또는 주차 경계를 넘을 수 있으므로, event row의 `event_date_kst`가 아니라 `generated_session_id`별 `session_start_time_kst`를 기준으로 주차를 계산했다. 따라서 하나의 세션은 세션이 시작된 주차에만 귀속된다.
+
 ### user_id 기준 WAU
 
 | week_start_kst | wau_by_user_id |
 |---|---:|
-| 2019-09-30 | 374245 |
-| 2019-10-07 | 521107 |
-| 2019-10-14 | 535673 |
-| 2019-10-21 | 550069 |
-| 2019-10-28 | 757635 |
-| 2019-11-04 | 876972 |
-| 2019-11-11 | 862640 |
-| 2019-11-18 | 862094 |
-| 2019-11-25 | 760503 |
-| 2019-12-02 | 20197 |
+| 2019-09-30 | 818388 |
+| 2019-10-07 | 1057958 |
+| 2019-10-14 | 1090898 |
+| 2019-10-21 | 1093146 |
+| 2019-10-28 | 1054722 |
+| 2019-11-04 | 1321141 |
+| 2019-11-11 | 1543309 |
+| 2019-11-18 | 1376755 |
+| 2019-11-25 | 1176254 |
 
 ### generated_session_id 기준 WAU
 
 | week_start_kst | wau_by_generated_session_id |
 |---|---:|
-| 2019-09-30 | 943978 |
-| 2019-10-07 | 1300869 |
-| 2019-10-14 | 1354278 |
-| 2019-10-21 | 1406010 |
-| 2019-10-28 | 1938867 |
-| 2019-11-04 | 2204989 |
-| 2019-11-11 | 2157846 |
-| 2019-11-18 | 2176918 |
-| 2019-11-25 | 1924702 |
-| 2019-12-02 | 51165 |
+| 2019-09-30 | 1421372 |
+| 2019-10-07 | 2108500 |
+| 2019-10-14 | 2280859 |
+| 2019-10-21 | 2169384 |
+| 2019-10-28 | 2079064 |
+| 2019-11-04 | 2718738 |
+| 2019-11-11 | 4322511 |
+| 2019-11-18 | 3332157 |
+| 2019-11-25 | 2563531 |
 
 ---
 

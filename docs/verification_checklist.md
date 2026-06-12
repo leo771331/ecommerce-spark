@@ -16,5 +16,8 @@
 | 전체 Oct/Nov Spark 처리 | 성공 |
 | Hive External Table 생성 | 성공 |
 | partition check | 성공 |
+| 원본 CSV event_time/user_id null 없음 확인 | 성공 |
 | user_id 기준 WAU 계산 | 성공 |
 | generated_session_id 기준 WAU 계산 | 성공 |
+| 세션 시작 주차 기준 generated_session_id WAU 재산출 | 성공 |
+| README WAU 결과 갱신 | 성공 |

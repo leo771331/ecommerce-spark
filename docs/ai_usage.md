@@ -25,6 +25,7 @@ AI는 다음 영역에서 보조적으로 활용했습니다.
 - sbt compile/package 실행
 - 샘플 데이터 실행 검증
 - Kaggle 데이터 다운로드
+- 원본 CSV의 event_time, user_id null 없음 확인
 - 전체 Oct/Nov 데이터 처리
 - Hive External Table 생성
 - partition check 실행
