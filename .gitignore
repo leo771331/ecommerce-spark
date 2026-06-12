@@ -36,3 +36,4 @@ data/processed/*
 *.jar
 *.zip
 *.tar.gz
+logs/
