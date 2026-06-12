@@ -12,7 +12,8 @@ object EcommerceSessionApp {
   final case class AppConfig(
       inputPaths: Seq[String] = Seq.empty,
       outputPath: String = "",
-      runId: String = ""
+      runId: String = "",
+      debug: Boolean = false
   )
 
   final case class PartitionCommit(
@@ -24,12 +25,13 @@ object EcommerceSessionApp {
   private val Usage: String =
     """
       |Usage:
-      |  EcommerceSessionApp --input <csv-path-1,csv-path-2,...> --output <parquet-output-path> [--run-id <run-id>]
+      |  EcommerceSessionApp --input <csv-path-1,csv-path-2,...> --output <parquet-output-path> [--run-id <run-id>] [--debug]
       |
       |Environment variables:
       |  INPUT_PATHS=<csv-path-1,csv-path-2,...>
       |  OUTPUT_PATH=<parquet-output-path>
       |  RUN_ID=<run-id>
+      |  DEBUG_OUTPUT=true
       |""".stripMargin.trim
 
   private val SessionGapSeconds: Long = 5 * 60
@@ -63,44 +65,62 @@ object EcommerceSessionApp {
       println(s"Input paths: ${config.inputPaths.mkString(",")}")
       println(s"Output path: ${config.outputPath}")
       println(s"Run ID: ${config.runId}")
+      println(s"Debug output: ${config.debug}")
 
       val rawEvents = readRawEvents(spark, config.inputPaths)
 
-      println("Raw event schema:")
-      rawEvents.printSchema()
+      if (config.debug) {
+        println("Raw event schema:")
+        rawEvents.printSchema()
 
-      println("Raw event sample:")
-      rawEvents.show(numRows = 5, truncate = false)
-
+        println("Raw event sample:")
+        rawEvents.show(numRows = 5, truncate = false)
+      }
       val eventsWithTime = addEventTimeColumns(rawEvents)
 
-      println("Event time conversion sample:")
-      eventsWithTime
-        .select("event_time", "event_time_utc", "event_time_kst", "user_id")
-        .show(numRows = 5, truncate = false)
+      if (config.debug) {
+        println("Event time conversion sample:")
+        eventsWithTime
+          .select("event_time", "event_time_utc", "event_time_kst", "user_id")
+          .show(numRows = 5, truncate = false)
+      }
 
       val eventsWithPartition = addKstDatePartitionColumn(eventsWithTime)
 
-      println("KST daily partition sample:")
-      eventsWithPartition
-        .select("event_time", "event_time_kst", "event_date_kst", "user_id")
-        .show(numRows = 10, truncate = false)
+      if (config.debug) {
+        println("KST daily partition sample:")
+        eventsWithPartition
+          .select("event_time", "event_time_kst", "event_date_kst", "user_id")
+          .show(numRows = 10, truncate = false)
+      }
 
-      val sessionizedEvents = addSessionColumns(eventsWithPartition)
+      val validEvents = filterValidEvents(eventsWithPartition)
 
-      println("Sessionization sample:")
-      sessionizedEvents
-        .select(
-          "user_id",
-          "event_time_kst",
-          "prev_event_time_kst",
-          "gap_seconds",
-          "is_new_session",
-          "session_seq",
-          "generated_session_id"
-        )
-        .orderBy("user_id", "event_time_kst")
-        .show(numRows = 50, truncate = false)
+      if (config.debug) {
+        println("Valid event sample:")
+        validEvents
+          .select("event_time", "event_time_kst", "event_date_kst", "user_id")
+          .show(numRows = 10, truncate = false)
+      }
+
+      val sessionizedEvents = addSessionColumns(validEvents)
+
+      if (config.debug) {
+        println("Sessionization sample:")
+        sessionizedEvents
+          .select(
+            "user_id",
+            "event_time_kst",
+            "prev_event_time_kst",
+            "gap_seconds",
+            "is_new_session",
+            "session_seq",
+            "generated_session_id"
+          )
+          .orderBy("user_id", "event_time_kst")
+          .show(numRows = 50, truncate = false)
+      }
+
       writeSessionizedEvents(
         spark,
         sessionizedEvents,
@@ -130,6 +150,9 @@ object EcommerceSessionApp {
         case "--run-id" :: value :: tail =>
           loop(tail, config.copy(runId = value.trim))
 
+        case "--debug" :: tail =>
+          loop(tail, config.copy(debug = true))
+
         case unknown :: _ =>
           throw new IllegalArgumentException(
             s"Unknown or incomplete argument: $unknown\n$Usage"
@@ -155,6 +178,12 @@ object EcommerceSessionApp {
       .map(_.trim)
       .filter(_.nonEmpty)
       .getOrElse("")
+
+    val envDebug = sys.env
+      .get("DEBUG_OUTPUT")
+      .exists(value =>
+        Set("1", "true", "yes", "y").contains(value.trim.toLowerCase)
+      )
 
     val finalInputPaths =
       if (parsedConfig.inputPaths.nonEmpty) parsedConfig.inputPaths
@@ -184,7 +213,8 @@ object EcommerceSessionApp {
     parsedConfig.copy(
       inputPaths = finalInputPaths,
       outputPath = finalOutputPath,
-      runId = finalRunId
+      runId = finalRunId,
+      debug = parsedConfig.debug || envDebug
     )
   }
 
@@ -231,6 +261,14 @@ object EcommerceSessionApp {
       "event_date_kst",
       date_format(col("event_time_kst"), "yyyy-MM-dd")
     )
+  }
+
+  private def filterValidEvents(events: DataFrame): DataFrame = {
+    events
+      .where(col("event_time_utc").isNotNull)
+      .where(col("event_time_kst").isNotNull)
+      .where(col("event_date_kst").isNotNull)
+      .where(col("user_id").isNotNull)
   }
 
   private def addSessionColumns(events: DataFrame): DataFrame = {
